@@ -65,7 +65,7 @@ export default function App() {
     await load();
   };
   const approve = async (p: any, body: any = {}) => { setBusy(true); finish(await post(`/api/proposals/${p.id}/approve`, body)); };
-  const onApproveClick = (p: any) => (p.verdict === "green" ? approve(p) : setApproving(p));
+  const onApproveClick = (p: any) => setApproving(p);
   const run = async () => { setBusy(true); finish(await post("/api/run")); };
   const undoCall = async (p: any, step: string, body: any = {}) => { setBusy(true); finish(await post(`/api/proposals/${p.id}/${step}`, body)); };
 
@@ -217,6 +217,37 @@ function Writes({ actions }: { actions: any[] }) {
     </pre>))}</>;
 }
 
+function DecisionCard({ d }: { d: any }) {
+  return (
+    <div className="rounded-xl border-2 border-teal-700/40 bg-teal-50/60 p-4 dark:bg-teal-950/20">
+      <p className="font-mono font-semibold text-[11px] text-teal-800 uppercase tracking-wider">What you are deciding: only this changes</p>
+      <div className="mt-2 space-y-2">
+        {d.changed.map((c: any, i: number) => (
+          <div key={i} className="rounded-lg border bg-card p-3">
+            <p className="flex flex-wrap items-center gap-2 font-medium text-sm">
+              <span className={cn("rounded px-1.5 py-0.5 font-mono font-semibold text-[10px] uppercase", c.is_new ? "bg-green-600/15 text-green-800" : "bg-amber-400/25 text-amber-900")}>{c.is_new ? "new record" : "existing record changes"}</span>
+              {c.account}{!c.is_new && <span className="font-mono font-normal text-[11px] text-muted-foreground">{c.account_id}</span>}
+            </p>
+            <ul className="mt-2 space-y-1.5">{c.changes.map((x: any) => (
+              <li key={x.label} className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="w-48 shrink-0 font-semibold">{x.label}</span>
+                <span className="rounded bg-red-600/10 px-1.5 py-0.5 font-mono text-[12.5px]">{x.from}</span>
+                <ArrowRight className="size-3.5" />
+                <span className="rounded bg-green-600/15 px-1.5 py-0.5 font-mono font-semibold text-[12.5px]">{x.to}</span>
+              </li>))}</ul>
+          </div>))}
+      </div>
+      {d.reference_only.length > 0 && (
+        <p className="mt-3 text-muted-foreground text-xs"><span className="font-semibold">Shown below for reference only, NOT changed:</span> {d.reference_only.map((r: any) => `${r.account} (${r.parent})`).join(" · ")}</p>
+      )}
+      <div className="mt-3 border-t border-teal-700/20 pt-3">
+        <p className="mb-1 font-semibold text-sm">Before you click, check:</p>
+        <ul className="list-disc space-y-1 pl-5 text-sm">{d.look_at.map((t: string) => <li key={t}>{t}</li>)}</ul>
+      </div>
+    </div>
+  );
+}
+
 function Detail({ p, busy, onApprove, onReject, onUndo, onUndoConfirm, onUndoCancel, onReopen }: any) {
   const open = ["pending", "failed", "conflict"].includes(p.status);
   return (
@@ -265,8 +296,9 @@ function Detail({ p, busy, onApprove, onReject, onUndo, onUndoConfirm, onUndoCan
         {p.undo && ["applied", "undo_requested"].includes(p.status) && (
           <div><H>If you undo this change</H><UndoPreview undo={p.undo} /></div>
         )}
+        {open && p.decision && <DecisionCard d={p.decision} />}
         <div><H>Safety rules</H><RuleList rules={p.rules} /></div>
-        {p.accounts.length > 0 && <div><H>Data point checks</H><CheckTable location={p.location} accounts={p.accounts} /></div>}
+        {p.accounts.length > 0 && <div><H>Data point checks (the website against every CRM record at this address)</H><CheckTable location={p.location} accounts={p.accounts} /></div>}
         <div className="grid gap-6 lg:grid-cols-2">
           <div><H>Why the tool proposes this</H><ul className="list-disc space-y-1 pl-5 text-sm">{p.reasons.map((r: string, i: number) => <li key={i}>{r}</li>)}</ul></div>
           <div><H>{p.status === "applied" ? "What was written" : "What approval will write"}</H><Writes actions={p.actions} /></div>
@@ -289,14 +321,14 @@ function ApproveDialog({ p, minReason, busy, onClose, onConfirm }: any) {
       <AlertDialogContent>
         <AlertDialogHeader>
           <div className={cn("mb-1 grid size-11 place-items-center rounded-full", red ? "bg-red-600/10 text-red-700" : "bg-amber-400/20 text-amber-700")}>{red ? <ShieldAlert /> : <TriangleAlert />}</div>
-          <AlertDialogTitle>{red ? "The rules advise against this change" : "Check these before approving"}</AlertDialogTitle>
+          <AlertDialogTitle>{red ? "The rules advise against this change" : "Approve this exact change?"}</AlertDialogTitle>
           <AlertDialogDescription>
             {red ? "You can still approve it, but this writes to the CRM against the predefined rules. Your reason is saved in the audit log."
-                 : "This change passed the hard rules but has cautions. Confirm you have looked at each one."}
+                 : "This writes to the CRM. Read the box below: it is the only thing that will change."}
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <div><H>{p.title}</H><RuleList rules={p.cautions} /></div>
-        <div><H>This will write</H><Writes actions={p.actions} /></div>
+        {p.decision && <DecisionCard d={p.decision} />}
+        {p.cautions.length > 0 && <div><H>Cautions</H><RuleList rules={p.cautions} /></div>}
         {red && (
           <div className="space-y-3 rounded-lg border border-red-600/30 bg-red-600/5 p-3">
             <label className="flex cursor-pointer items-start gap-2 text-sm"><input id="ack" type="checkbox" className="mt-1 size-4 accent-red-700" checked={ack} onChange={(e) => setAck(e.target.checked)} />
@@ -310,8 +342,8 @@ function ApproveDialog({ p, minReason, busy, onClose, onConfirm }: any) {
         )}
         <AlertDialogFooter>
           <AlertDialogCancel>Go back</AlertDialogCancel>
-          <Button variant={red ? "destructive" : "warning"} disabled={!ready || busy} onClick={() => onConfirm(p, red ? { override: true, reason } : { confirm: true })}>
-            {red ? "Override and write to CRM" : "Approve and write to CRM"}
+          <Button variant={red ? "destructive" : p.verdict === "green" ? "success" : "warning"} disabled={!ready || busy} onClick={() => onConfirm(p, red ? { override: true, reason } : { confirm: true })}>
+            {red ? "Override and write to CRM" : "Yes, write this to the CRM"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -328,8 +360,9 @@ function RejectDialog({ p, busy, onClose, onConfirm }: any) {
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Reject this proposal?</AlertDialogTitle>
-          <AlertDialogDescription>{p.title}. Nothing is written to the CRM, and this exact change will not be proposed again.</AlertDialogDescription>
+          <AlertDialogDescription>Nothing is written to the CRM, and this exact change will not be proposed again. Rejecting means: "do NOT make the change below."</AlertDialogDescription>
         </AlertDialogHeader>
+        {p.decision && <DecisionCard d={p.decision} />}
         <div>
           <label htmlFor="rej" className="mb-1 block font-medium text-sm">Reason (optional)</label>
           <input id="rej" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="For example: cosmetic spelling difference"

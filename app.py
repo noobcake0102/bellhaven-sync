@@ -31,6 +31,66 @@ KIND_LABELS = {
 }
 
 
+FIELD_LABELS = {
+    "name": "Account name", "parent_id": "Parent account", "status": "Status", "billing_street": "Billing street",
+    "billing_city": "Billing city", "billing_state": "Billing state", "billing_zip": "Billing zip", "care_type": "Care type",
+    "chow_current_account": "Current-owner account (CHOW link)", "duplicate_of_account": "Duplicate of (survivor account)",
+}
+LOOK_AT = {
+    "RENAME": ["Look at ONE field: the account name. Is the website name the right new name for this same building?",
+               "Check the street matches. Do not judge the phone or parent here."],
+    "REPARENT": ["Look at ONE field: the parent account. Does the website list this building under Bellhaven?",
+                 "Check revenue and AR are both zero (otherwise the billing SOP says create a new account instead).",
+                 "Ignore the other records in the table: they are NOT changed by this."],
+    "DUPLICATE": ["Look at which record gets DEACTIVATED (the 'duplicate'), and which one stays (the 'survivor').",
+                  "Check both are the same building and neither has revenue or AR.",
+                  "Parent and name on the duplicate do not matter: that record is being retired."],
+    "CHOW": ["Look at the old account: it is left untouched and pointed at the new one (billing SOP).",
+             "Check the new account is created under the right new parent."],
+    "CHOW_LINK": ["Look at the old account: only its current-owner link is set. Nothing else changes.",
+                  "Check the account it points to really is the same building under the new owner."],
+    "CREATE": ["Look at the new account's name, parent and street. Is it really missing from the CRM?"],
+    "FIX_ADDRESS": ["Look at ONE field group: the billing address. Does the website street match the building?"],
+    "FIX_CARE_TYPE": ["Look at ONE field: care type. Website vs CRM."],
+    "REACTIVATE": ["Look at ONE field: status. Is this building really back on the website?"],
+    "OFF_WEBSITE": ["Look at the status flag only. The building is gone from the website; no new owner is assumed."],
+}
+
+
+def _decision(kind, evidence, actions):
+    """Plain description of exactly what this approval changes, and what it leaves alone."""
+    accts = {a["account"]["account_id"]: a["account"] for a in evidence.get("accounts", [])}
+    meta = evidence.get("meta", {})
+
+    def nice(field, value):
+        if value in (None, ""):
+            return "(empty)"
+        if field == "parent_id":
+            return meta.get("operator_name") if value == meta.get("operator_id") else (accts.get(value, {}).get("name") or value)
+        if value == "$new_id":
+            return "the NEW account created in this same step"
+        if field in ("chow_current_account", "duplicate_of_account"):
+            return accts.get(value, {}).get("name") or value
+        return str(value)
+
+    changed, touched = [], set()
+    for a in actions:
+        fields = {k: v for k, v in a["fields"].items() if k not in ("note", "note_append")}
+        if a["op"] == "create":
+            changed.append({"account": a["fields"].get("name", "(new account)"), "account_id": "NEW", "is_new": True,
+                            "changes": [{"label": FIELD_LABELS.get(k, k), "from": "(does not exist yet)", "to": nice(k, v)}
+                                        for k, v in fields.items() if k in ("name", "parent_id", "billing_street", "status")]})
+            continue
+        cur = accts.get(a["account_id"], {})
+        touched.add(a["account_id"])
+        changed.append({"account": cur.get("name", a["account_id"]), "account_id": a["account_id"], "is_new": False,
+                        "changes": [{"label": FIELD_LABELS.get(k, k), "from": nice(k, cur.get(k) if k != "parent_id" else cur.get("parent_id")) if k != "parent_id" else (cur.get("parent_name") or "(empty)"),
+                                     "to": nice(k, v)} for k, v in fields.items()]})
+    reference = [{"account": a["account"]["name"], "parent": a["account"].get("parent_name") or "(none)"}
+                 for a in evidence.get("accounts", []) if a["account"]["account_id"] not in touched]
+    return {"look_at": LOOK_AT.get(kind, []), "changed": changed, "reference_only": reference}
+
+
 def present(row):
     """A stored proposal plus its rule checks, ready for the screen."""
     evidence, actions = json.loads(row["evidence"]), json.loads(row["actions"])
@@ -42,6 +102,7 @@ def present(row):
         "rules": ev["rules"], "verdict": ev["verdict"], "cautions": ev["cautions"], "actions": actions,
         "result": json.loads(row["result"]) if row["result"] else None,
         "decided_at": row["decided_at"], "decided_by": row["decided_by"], "reason": row["reason"],
+        "decision": _decision(row["kind"], evidence, actions),
     })
 
 
