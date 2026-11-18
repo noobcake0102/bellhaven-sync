@@ -1,0 +1,41 @@
+# Alternative to crontab.txt: run the pipeline on GitHub's scheduler.
+# The job only READS the website and the CRM and queues proposals. It never
+# writes to the CRM; that still needs a human Approve in the review app.
+name: Daily Bellhaven sync
+
+on:
+  schedule:
+    - cron: "15 11 * * *"      # 11:15 UTC = 06:15 US Eastern (standard time)
+  workflow_dispatch: {}         # manual "Run workflow" button
+
+concurrency:                    # never let two runs overlap
+  group: bellhaven-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write               # to save the queue state back to the repo
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: sync-state } # branch that holds code + state/sync.db
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q
+      - run: python pipeline.py
+        env:
+          CRM_TOKEN: ${{ secrets.CRM_TOKEN }}
+      # Decisions live in state/sync.db, so it has to survive between runs.
+      # Committing it is the zero-infrastructure option; in production this
+      # table would be Postgres and this step would disappear.
+      - name: Save queue state
+        run: |
+          git config user.name "bellhaven-sync"
+          git config user.email "bellhaven-sync@users.noreply.github.com"
+          git add -f state/sync.db
+          git commit -m "sync state $(date -u +%F)" || echo "no changes"
+          git push

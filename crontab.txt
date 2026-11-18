@@ -1,0 +1,4 @@
+# Daily at 06:15 server time, on the same machine that hosts the review app,
+# so the job and the reviewers share one queue (state/sync.db).
+# Install with:  crontab crontab.txt   (adjust the path first)
+15 6 * * *  cd /opt/bellhaven-sync && .venv/bin/python pipeline.py >> state/pipeline.log 2>&1
